@@ -341,37 +341,44 @@ def search():
         # 検索履歴を読み込む
         history = []
         try:
-            with open('search_history.json', 'r', encoding='utf-8') as f:
-                history_data = json.load(f)
-                # データ形式を確認して適切に処理
-                if isinstance(history_data, list):
-                    history = history_data
-                elif isinstance(history_data, dict):
-                    # 辞書形式の場合はリストに変換
-                    history = []
-                    for search_key, search_data in history_data.items():
-                        if isinstance(search_data, dict) and 'results' in search_data:
-                            history.append({
-                                'search_text': search_key,
-                                'results': search_data.get('results', []),
-                                'last_updated': search_data.get('last_updated', ''),
-                                'urls': search_data.get('urls', [])
-                            })
-                else:
-                    history = []
-        except (FileNotFoundError, json.JSONDecodeError):
+            if os.path.exists('search_history.json'):
+                with open('search_history.json', 'r', encoding='utf-8') as f:
+                    try:
+                        history_data = json.load(f)
+                        if isinstance(history_data, list):
+                            history = history_data
+                        elif isinstance(history_data, dict):
+                            # 辞書形式の場合はリストに変換
+                            history = []
+                            for search_key, search_data in history_data.items():
+                                if isinstance(search_data, dict) and 'results' in search_data:
+                                    history.append({
+                                        'search_text': search_key,
+                                        'results': search_data.get('results', []),
+                                        'last_updated': search_data.get('last_updated', ''),
+                                        'urls': search_data.get('urls', [])
+                                    })
+                    except json.JSONDecodeError:
+                        logging.error("検索履歴のJSONデコードに失敗しました")
+                        history = []
+            else:
+                # ファイルが存在しない場合は空のリストで初期化
+                history = []
+                with open('search_history.json', 'w', encoding='utf-8') as f:
+                    json.dump(history, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logging.error(f"検索履歴の読み込み中にエラー: {str(e)}")
             history = []
         
         # 前回の検索結果を取得
         previous_results = None
-        if is_research and history and len(history) > 0:
+        if is_research and isinstance(history, list) and len(history) > 0:
             try:
-                # リストの最初の要素を取得
-                if isinstance(history, list) and len(history) > 0:
-                    previous_results = history[0]
-                else:
+                previous_results = history[0]
+                if not isinstance(previous_results, dict):
                     previous_results = None
-            except (IndexError, TypeError, KeyError):
+            except (IndexError, TypeError, KeyError) as e:
+                logging.error(f"前回の検索結果の取得中にエラー: {str(e)}")
                 previous_results = None
         
         # 検索を実行
@@ -382,6 +389,9 @@ def search():
             # 検索結果を整形
             formatted_results = []
             for result in results.get('results', []):
+                if not isinstance(result, dict):
+                    continue
+                    
                 match_count = 0
                 body_matches = result.get('body_matches', [])
                 head_matches = result.get('head_matches', [])
@@ -411,7 +421,6 @@ def search():
                         elif isinstance(h, str):
                             href_snippets.append({'text': h, 'url': h})
                         else:
-                            # 予期しない形式の場合はスキップ
                             continue
                     except Exception as e:
                         logging.error(f"href_matchの処理中にエラー: {str(e)}")
@@ -440,13 +449,21 @@ def search():
             }
             
             # 前回の検索結果がある場合、未検索のURLを追加
-            if is_research and previous_results:
+            if is_research and previous_results and isinstance(previous_results, dict):
                 try:
                     previous_urls = set()
-                    if isinstance(previous_results, dict) and 'results' in previous_results:
-                        previous_urls = {result['url'] for result in previous_results['results'] if isinstance(result, dict) and 'url' in result}
+                    if 'results' in previous_results and isinstance(previous_results['results'], list):
+                        previous_urls = {
+                            result['url'] 
+                            for result in previous_results['results'] 
+                            if isinstance(result, dict) and 'url' in result
+                        }
                     
-                    new_urls = {result['url'] for result in formatted_results}
+                    new_urls = {
+                        result['url'] 
+                        for result in formatted_results 
+                        if isinstance(result, dict) and 'url' in result
+                    }
                     skipped_urls = previous_urls - new_urls
                     
                     if skipped_urls:
@@ -454,8 +471,6 @@ def search():
                         history_entry['skipped_count'] = len(skipped_urls)
                 except Exception as e:
                     logging.error(f"前回の結果との比較中にエラー: {str(e)}")
-                    # エラーが発生した場合はスキップ
-                    pass
             
             # 履歴を更新（リスト形式で保存）
             if not isinstance(history, list):
