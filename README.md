@@ -72,33 +72,6 @@ python app.py
 
 アプリケーションは `http://127.0.0.1:8080` でアクセスできます。
 
-### 本番環境
-
-```bash
-source venv/bin/activate
-gunicorn -w 4 -b 0.0.0.0:8080 app:app
-```
-
-## デプロイ
-
-### 必要なファイル
-
-```
-.
-├── app.py              # メインアプリケーション
-├── wsgi.py            # WSGIエントリーポイント
-├── requirements.txt   # 依存関係
-├── static/           # CSS、JavaScript、画像
-└── templates/        # HTMLテンプレート
-```
-
-### デプロイ手順
-
-1. 必要なファイルをサーバーにアップロード
-2. サーバーで仮想環境を作成し、依存関係をインストール
-3. Gunicorn でアプリケーションを起動
-4. Nginx などの Web サーバーと連携
-
 ## robots.txt の確認について
 
 スクレイピングを行う前に、対象サイトの `robots.txt` を必ず確認してください。
