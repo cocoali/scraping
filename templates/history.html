@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>検索履歴 - ウェブテキスト検索</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>検索履歴</h1>
+            <div class="nav-links">
+                <a href="{{ url_for('index') }}" class="nav-btn">検索ページへ</a>
+                <a href="{{ url_for('logout') }}" class="logout-btn">ログアウト</a>
+            </div>
+        </div>
+
+        <div class="history-container">
+            {% if history %}
+                {% for entry in history %}
+                <div class="history-item">
+                    <div class="history-header">
+                        <h3>{{ entry.search_text }}</h3>
+                        <span class="history-date">{{ entry.last_updated }}</span>
+                    </div>
+                    <div class="history-stats">
+                        <p>検索URL数: {{ entry.total_urls }}</p>
+                        <p>検索結果数: {{ entry.total_results }}</p>
+                    </div>
+                    <div class="history-results">
+                        {% for result in entry.results %}
+                        <div class="history-result-item">
+                            <h4><a href="{{ result.url }}" target="_blank">{{ result.title }}</a></h4>
+                            <p>マッチ数: {{ result.matches }}</p>
+                            {% for snippet in result.snippets %}
+                            <div class="snippet">{{ snippet | safe }}</div>
+                            {% endfor %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <div class="history-actions">
+                        <button class="reuse-btn" data-search-text="{{ entry.search_text }}">この検索を再利用</button>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="no-history">
+                    <p>検索履歴がありません。</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // 検索再利用ボタンのイベントリスナー
+            document.querySelectorAll('.reuse-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    const searchText = this.dataset.searchText;
+                    window.location.href = `{{ url_for('index') }}?search=${encodeURIComponent(searchText)}`;
+                });
+            });
+        });
+    </script>
+</body>
+</html> 

@@ -1,0 +1,13 @@
+# .railwayignore
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.env
+.git/
+.idea/
+.vscode/
+*.log
+search_history.json
+Procfile
+runtime.txt

@@ -1,0 +1,9 @@
+flask==3.0.2
+requests==2.31.0
+beautifulsoup4==4.12.3
+gunicorn==21.2.0
+python-dotenv==1.0.1
+flask-limiter==3.5.0
+lxml==4.9.3
+redis==5.0.1
+psutil==5.9.6  # メモリ監視用（オプション）
