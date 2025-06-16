@@ -326,8 +326,8 @@ class WebTextSearcher:
             print(f"ページの検索中にエラー: {url} - {str(e)}")
 
 @app.route('/search', methods=['POST'])
-@login_required
 @limiter.limit("10 per minute")
+@login_required
 def search():
     """検索を実行"""
     url = request.form.get('url')
@@ -393,13 +393,13 @@ def search():
                         elif isinstance(h, str):
                             href_snippets.append({'text': h, 'url': h})
                     except Exception as e:
-                        print(f"href_matchの処理中にエラー: {str(e)}")
+                        logging.error(f"href_matchの処理中にエラー: {str(e)}")
                         continue
                 
                 formatted_results.append({
                     'url': result.get('url', ''),
                     'title': result.get('title', '') or result.get('url', ''),
-                    'depth': result.get('depth', 0),  # 階層情報を追加
+                    'depth': result.get('depth', 0),
                     'matches': match_count,
                     'body_matches': body_matches,
                     'head_matches': head_matches,
@@ -448,6 +448,7 @@ def search():
             return jsonify({'error': results['error']})
     
     except Exception as e:
+        logging.error(f"検索処理中にエラー: {str(e)}")
         return jsonify({'error': str(e)})
 
 @app.route('/search_history', methods=['GET'])
