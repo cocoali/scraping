@@ -213,18 +213,21 @@ document.addEventListener('DOMContentLoaded', function () {
             }
 
             // href属性のマッチ
-            if (result.href_matches && result.href_matches.length > 0) {
+            if (result.href_matches && Array.isArray(result.href_matches) && result.href_matches.length > 0) {
                 sections.push(`
                     <div class="result-section">
                         <h3>リンクの一致</h3>
                         <div class="matches">
-                            ${result.href_matches.map(match => `
-                                <div class="match">
-                                    <a href="${match.original_url}" target="_blank">
-                                        ${match.text || match.original_url}
+                            ${result.href_matches.map(match => {
+                                if (!match) return '';
+                                const text = match.text || match.url || '';
+                                const url = match.url || match.original_url || '';
+                                return `<div class="match">
+                                    <a href="${url}" target="_blank">
+                                        ${text || url}
                                     </a>
-                                </div>
-                            `).join('')}
+                                </div>`;
+                            }).join('')}
                         </div>
                     </div>
                 `);
