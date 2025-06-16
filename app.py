@@ -451,69 +451,169 @@ def search():
         logging.error(f"検索処理中にエラー: {str(e)}")
         return jsonify({'error': str(e)})
 
-@app.route('/search_history', methods=['GET'])
+@app.route('/search', methods=['POST'])
 @login_required
-def get_search_history():
-    """検索履歴を取得"""
+@limiter.limit("10 per minute")
+def search():
+    """検索を実行"""
+    url = request.form.get('url')
+    search_text = request.form.get('search_text')
+    is_research = request.form.get('is_research') == 'true'
+    
+    if not url or not search_text:
+        return jsonify({'error': 'URLと検索テキストを入力してください。'})
+    
     try:
-        if os.path.exists('search_history.json'):
+        # 検索履歴を読み込む（修正版）
+        history = []
+        try:
             with open('search_history.json', 'r', encoding='utf-8') as f:
-                history = json.load(f)
+                history_data = json.load(f)
+                # データ形式を確認して適切に処理
+                if isinstance(history_data, list):
+                    history = history_data
+                elif isinstance(history_data, dict):
+                    # 辞書形式の場合はリストに変換
+                    history = []
+                    for search_key, search_data in history_data.items():
+                        if isinstance(search_data, dict) and 'results' in search_data:
+                            history.append({
+                                'search_text': search_key,
+                                'results': search_data.get('results', []),
+                                'last_updated': search_data.get('last_updated', ''),
+                                'urls': search_data.get('urls', [])
+                            })
+                else:
+                    history = []
+        except (FileNotFoundError, json.JSONDecodeError):
+            history = []
+        
+        # 前回の検索結果を取得（修正版）
+        previous_results = None
+        if is_research and history and len(history) > 0:
+            try:
+                # リストの最初の要素を取得
+                if isinstance(history, list) and len(history) > 0:
+                    previous_results = history[0]
+                else:
+                    previous_results = None
+            except (IndexError, TypeError, KeyError):
+                previous_results = None
+        
+        # 検索を実行
+        searcher = WebTextSearcher()
+        results = searcher.search(url, search_text)
+        
+        if results['success']:
+            # 検索結果を整形
+            formatted_results = []
+            for result in results.get('results', []):
+                match_count = 0
+                body_matches = result.get('body_matches', [])
+                head_matches = result.get('head_matches', [])
+                href_matches = result.get('href_matches', [])
+                
+                if body_matches:
+                    match_count += len(body_matches)
+                if head_matches:
+                    match_count += len(head_matches)
+                if href_matches:
+                    match_count += len(href_matches)
+                
+                snippets = []
+                if body_matches:
+                    snippets.extend(body_matches)
+                if head_matches:
+                    snippets.extend(head_matches)
+                
+                # href_matchesの各要素が辞書であることを保証し、リンクテキストとURLをセット
+                href_snippets = []
+                for h in href_matches:
+                    try:
+                        if isinstance(h, dict):
+                            text = h.get('text', '')
+                            url_val = h.get('original_url', h.get('href', ''))
+                            href_snippets.append({'text': text, 'url': url_val})
+                        elif isinstance(h, str):
+                            href_snippets.append({'text': h, 'url': h})
+                        else:
+                            # 予期しない形式の場合はスキップ
+                            continue
+                    except Exception as e:
+                        print(f"href_matchの処理中にエラー: {str(e)}")
+                        continue
+                
+                formatted_results.append({
+                    'url': result.get('url', ''),
+                    'title': result.get('title', '') or result.get('url', ''),
+                    'depth': result.get('depth', 0),
+                    'matches': match_count,
+                    'body_matches': body_matches,
+                    'head_matches': head_matches,
+                    'href_matches': href_snippets,
+                    'snippets': snippets
+                })
+            
+            # 検索履歴に追加
+            history_entry = {
+                'search_text': search_text,
+                'base_url': url,
+                'results': formatted_results,
+                'total_urls': results.get('total_pages', 0),
+                'total_results': len(formatted_results),
+                'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'is_research': is_research
+            }
+            
+            # 前回の検索結果がある場合、未検索のURLを追加
+            if is_research and previous_results:
+                try:
+                    previous_urls = set()
+                    if isinstance(previous_results, dict) and 'results' in previous_results:
+                        previous_urls = {result['url'] for result in previous_results['results'] if isinstance(result, dict) and 'url' in result}
+                    
+                    new_urls = {result['url'] for result in formatted_results}
+                    skipped_urls = previous_urls - new_urls
+                    
+                    if skipped_urls:
+                        history_entry['skipped_urls'] = list(skipped_urls)
+                        history_entry['skipped_count'] = len(skipped_urls)
+                except Exception as e:
+                    print(f"前回の結果との比較中にエラー: {str(e)}")
+                    # エラーが発生した場合はスキップ
+                    pass
+            
+            # 履歴を更新（リスト形式で保存）
+            if not isinstance(history, list):
+                history = []
+            
+            history.insert(0, history_entry)
+            
+            # 履歴を保存（最新の10件のみ保持）
+            try:
+                with open('search_history.json', 'w', encoding='utf-8') as f:
+                    json.dump(history[:10], f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f"履歴保存中にエラー: {str(e)}")
+            
             return jsonify({
                 'success': True,
-                'history': history
+                'results': formatted_results,
+                'total_pages': results.get('total_pages', 0),
+                'total_results': len(formatted_results),
+                'is_research': is_research,
+                'skipped_urls': history_entry.get('skipped_urls', []),
+                'skipped_count': history_entry.get('skipped_count', 0)
             })
-        return jsonify({
-            'success': True,
-            'history': []
-        })
+        else:
+            return jsonify({'error': results['error']})
+    
     except Exception as e:
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        })
-
-@app.errorhandler(429)
-def ratelimit_handler(e):
-    return jsonify({
-        'success': False,
-        'error': 'リクエストが多すぎます。しばらく待ってから再試行してください。'
-    }), 429
-
-@app.errorhandler(500)
-def internal_error(error):
-    logging.error(f"Internal Server Error: {str(error)}")
-    return jsonify({'error': 'Internal Server Error', 'details': str(error)}), 500
-
-@app.route('/health')
-def health_check():
-    try:
-        # Redis接続確認
-        redis_connected = False
-        if storage_backend and hasattr(storage_backend, 'storage'):
-            try:
-                if hasattr(storage_backend.storage, 'ping'):
-                    storage_backend.storage.ping()
-                    redis_connected = True
-            except:
-                pass
-        
-        # 基本的なヘルスチェック情報
-        health_info = {
-            'status': 'healthy',
-            'timestamp': datetime.now().isoformat(),
-            'redis_connected': redis_connected,
-            'storage_backend': type(storage_backend).__name__ if storage_backend else 'None'
-        }
-        
-        return jsonify(health_info), 200
-    except Exception as e:
-        logging.error(f"Health check failed: {str(e)}")
-        return jsonify({
-            'status': 'unhealthy',
-            'error': str(e),
-            'timestamp': datetime.now().isoformat()
-        }), 500
+        # エラーログを追加
+        print(f"検索処理中にエラー: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)})
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
