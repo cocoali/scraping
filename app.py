@@ -139,23 +139,47 @@ class WebTextSearcher:
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
         self.history_file = 'search_history.json'
+        self.search_history = {}
         self.load_history()
 
     def load_history(self):
         """検索履歴を読み込む"""
-        if os.path.exists(self.history_file):
-            try:
+        try:
+            if os.path.exists(self.history_file):
                 with open(self.history_file, 'r', encoding='utf-8') as f:
-                    self.search_history = json.load(f)
-            except:
+                    try:
+                        history_data = json.load(f)
+                        if isinstance(history_data, dict):
+                            self.search_history = history_data
+                        elif isinstance(history_data, list):
+                            # リスト形式の場合は辞書形式に変換
+                            self.search_history = {}
+                            for entry in history_data:
+                                if isinstance(entry, dict) and 'search_text' in entry:
+                                    self.search_history[entry['search_text']] = {
+                                        'urls': entry.get('urls', []),
+                                        'results': entry.get('results', []),
+                                        'last_updated': entry.get('last_updated', datetime.now().isoformat())
+                                    }
+                        else:
+                            self.search_history = {}
+                    except json.JSONDecodeError:
+                        logging.error("検索履歴のJSONデコードに失敗しました")
+                        self.search_history = {}
+            else:
                 self.search_history = {}
-        else:
+                self.save_history()
+        except Exception as e:
+            logging.error(f"検索履歴の読み込み中にエラー: {str(e)}")
             self.search_history = {}
 
     def save_history(self):
         """検索履歴を保存"""
-        with open(self.history_file, 'w', encoding='utf-8') as f:
-            json.dump(self.search_history, f, ensure_ascii=False, indent=2)
+        try:
+            with open(self.history_file, 'w', encoding='utf-8') as f:
+                json.dump(self.search_history, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logging.error(f"検索履歴の保存中にエラー: {str(e)}")
 
     def _highlight_text(self, text, search_text):
         """検索テキストをハイライト表示"""
@@ -171,14 +195,21 @@ class WebTextSearcher:
 
     def search(self, url, search_text, auth=None, skip_visited=True):
         """指定されたURLから検索を開始"""
-        print(f"検索開始: URL={url}, 検索テキスト={search_text}")
+        logging.info(f"検索開始: URL={url}, 検索テキスト={search_text}")
         self.visited_urls = set()
         results = []
+        error_occurred = False
+        error_message = None
         
         # 検索履歴から既に検索済みのURLを取得
         if skip_visited and search_text in self.search_history:
-            self.visited_urls.update(self.search_history[search_text]['urls'])
-            print(f"既に検索済みのURL数: {len(self.visited_urls)}")
+            try:
+                history_entry = self.search_history[search_text]
+                if isinstance(history_entry, dict) and 'urls' in history_entry:
+                    self.visited_urls.update(history_entry['urls'])
+                    logging.info(f"既に検索済みのURL数: {len(self.visited_urls)}")
+            except Exception as e:
+                logging.error(f"検索履歴の処理中にエラー: {str(e)}")
         
         try:
             self._search_page(url, search_text, depth=0, results=results, auth=auth)
@@ -201,17 +232,19 @@ class WebTextSearcher:
             
             self.save_history()
             
-            return {
-                'success': True,
-                'results': results,
-                'total_pages': len(self.visited_urls)
-            }
         except Exception as e:
-            print(f"検索中にエラー: {str(e)}")
-            return {
-                'success': False,
-                'error': str(e)
-            }
+            error_occurred = True
+            error_message = str(e)
+            logging.error(f"検索中にエラー: {error_message}")
+        
+        # 結果を返す（エラーが発生していても、取得済みのデータを返す）
+        return {
+            'success': not error_occurred,
+            'results': results,
+            'total_pages': len(self.visited_urls),
+            'error': error_message if error_occurred else None,
+            'partial_results': error_occurred and len(results) > 0
+        }
 
     def _search_page(self, url, search_text, depth=0, results=None, auth=None):
         """ページを検索し、結果を追加"""
@@ -385,117 +418,124 @@ def search():
         searcher = WebTextSearcher()
         results = searcher.search(url, search_text)
         
-        if results['success']:
-            # 検索結果を整形
-            formatted_results = []
-            for result in results.get('results', []):
-                if not isinstance(result, dict):
-                    continue
-                    
-                match_count = 0
-                body_matches = result.get('body_matches', [])
-                head_matches = result.get('head_matches', [])
-                href_matches = result.get('href_matches', [])
+        # 検索結果を整形
+        formatted_results = []
+        for result in results.get('results', []):
+            if not isinstance(result, dict):
+                continue
                 
-                if body_matches:
-                    match_count += len(body_matches)
-                if head_matches:
-                    match_count += len(head_matches)
-                if href_matches:
-                    match_count += len(href_matches)
-                
-                snippets = []
-                if body_matches:
-                    snippets.extend(body_matches)
-                if head_matches:
-                    snippets.extend(head_matches)
-                
-                # href_matchesの各要素が辞書であることを保証し、リンクテキストとURLをセット
-                href_snippets = []
-                for h in href_matches:
-                    try:
-                        if isinstance(h, dict):
-                            text = h.get('text', '')
-                            url_val = h.get('original_url', h.get('href', ''))
-                            href_snippets.append({'text': text, 'url': url_val})
-                        elif isinstance(h, str):
-                            href_snippets.append({'text': h, 'url': h})
-                        else:
-                            continue
-                    except Exception as e:
-                        logging.error(f"href_matchの処理中にエラー: {str(e)}")
-                        continue
-                
-                formatted_results.append({
-                    'url': result.get('url', ''),
-                    'title': result.get('title', '') or result.get('url', ''),
-                    'depth': result.get('depth', 0),
-                    'matches': match_count,
-                    'body_matches': body_matches,
-                    'head_matches': head_matches,
-                    'href_matches': href_snippets,
-                    'snippets': snippets
-                })
+            match_count = 0
+            body_matches = result.get('body_matches', [])
+            head_matches = result.get('head_matches', [])
+            href_matches = result.get('href_matches', [])
             
-            # 検索履歴に追加
-            history_entry = {
-                'search_text': search_text,
-                'base_url': url,
-                'results': formatted_results,
-                'total_urls': results.get('total_pages', 0),
-                'total_results': len(formatted_results),
-                'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'is_research': is_research
-            }
+            if body_matches:
+                match_count += len(body_matches)
+            if head_matches:
+                match_count += len(head_matches)
+            if href_matches:
+                match_count += len(href_matches)
             
-            # 前回の検索結果がある場合、未検索のURLを追加
-            if is_research and previous_results and isinstance(previous_results, dict):
+            snippets = []
+            if body_matches:
+                snippets.extend(body_matches)
+            if head_matches:
+                snippets.extend(head_matches)
+            
+            # href_matchesの各要素が辞書であることを保証し、リンクテキストとURLをセット
+            href_snippets = []
+            for h in href_matches:
                 try:
-                    previous_urls = set()
-                    if 'results' in previous_results and isinstance(previous_results['results'], list):
-                        previous_urls = {
-                            result['url'] 
-                            for result in previous_results['results'] 
-                            if isinstance(result, dict) and 'url' in result
-                        }
-                    
-                    new_urls = {
+                    if isinstance(h, dict):
+                        text = h.get('text', '')
+                        url_val = h.get('original_url', h.get('href', ''))
+                        href_snippets.append({'text': text, 'url': url_val})
+                    elif isinstance(h, str):
+                        href_snippets.append({'text': h, 'url': h})
+                    else:
+                        continue
+                except Exception as e:
+                    logging.error(f"href_matchの処理中にエラー: {str(e)}")
+                    continue
+            
+            formatted_results.append({
+                'url': result.get('url', ''),
+                'title': result.get('title', '') or result.get('url', ''),
+                'depth': result.get('depth', 0),
+                'matches': match_count,
+                'body_matches': body_matches,
+                'head_matches': head_matches,
+                'href_matches': href_snippets,
+                'snippets': snippets
+            })
+        
+        # 検索履歴に追加
+        history_entry = {
+            'search_text': search_text,
+            'base_url': url,
+            'results': formatted_results,
+            'total_urls': results.get('total_pages', 0),
+            'total_results': len(formatted_results),
+            'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'is_research': is_research
+        }
+        
+        # 前回の検索結果がある場合、未検索のURLを追加
+        if is_research and previous_results and isinstance(previous_results, dict):
+            try:
+                previous_urls = set()
+                if 'results' in previous_results and isinstance(previous_results['results'], list):
+                    previous_urls = {
                         result['url'] 
-                        for result in formatted_results 
+                        for result in previous_results['results'] 
                         if isinstance(result, dict) and 'url' in result
                     }
-                    skipped_urls = previous_urls - new_urls
-                    
-                    if skipped_urls:
-                        history_entry['skipped_urls'] = list(skipped_urls)
-                        history_entry['skipped_count'] = len(skipped_urls)
-                except Exception as e:
-                    logging.error(f"前回の結果との比較中にエラー: {str(e)}")
-            
-            # 履歴を更新（リスト形式で保存）
-            if not isinstance(history, list):
-                history = []
-            
-            history.insert(0, history_entry)
-            
-            # 履歴を保存（最新の10件のみ保持）
-            try:
-                with open('search_history.json', 'w', encoding='utf-8') as f:
-                    json.dump(history[:10], f, ensure_ascii=False, indent=2)
+                
+                new_urls = {
+                    result['url'] 
+                    for result in formatted_results 
+                    if isinstance(result, dict) and 'url' in result
+                }
+                skipped_urls = previous_urls - new_urls
+                
+                if skipped_urls:
+                    history_entry['skipped_urls'] = list(skipped_urls)
+                    history_entry['skipped_count'] = len(skipped_urls)
             except Exception as e:
-                logging.error(f"履歴保存中にエラー: {str(e)}")
-            
-            return jsonify({
-                'success': True,
-                'results': formatted_results,
-                'total_pages': results.get('total_pages', 0),
-                'total_results': len(formatted_results),
-                'is_research': is_research,
-                'skipped_urls': history_entry.get('skipped_urls', []),
-                'skipped_count': history_entry.get('skipped_count', 0)
-            })
-        else:
-            return jsonify({'error': results['error']})
+                logging.error(f"前回の結果との比較中にエラー: {str(e)}")
+        
+        # 履歴を更新（リスト形式で保存）
+        if not isinstance(history, list):
+            history = []
+        
+        history.insert(0, history_entry)
+        
+        # 履歴を保存（最新の10件のみ保持）
+        try:
+            with open('search_history.json', 'w', encoding='utf-8') as f:
+                json.dump(history[:10], f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            logging.error(f"履歴保存中にエラー: {str(e)}")
+        
+        # レスポンスを返す
+        response = {
+            'success': results.get('success', False),
+            'results': formatted_results,
+            'total_pages': results.get('total_pages', 0),
+            'total_results': len(formatted_results),
+            'is_research': is_research,
+            'skipped_urls': history_entry.get('skipped_urls', []),
+            'skipped_count': history_entry.get('skipped_count', 0)
+        }
+        
+        # エラーが発生した場合でも、部分的な結果がある場合はそれを含める
+        if results.get('error'):
+            response['error'] = results['error']
+            if results.get('partial_results'):
+                response['partial_results'] = True
+                response['message'] = 'エラーが発生しましたが、一部の結果を表示します。'
+        
+        return jsonify(response)
     
     except Exception as e:
         logging.error(f"検索処理中にエラー: {str(e)}")
