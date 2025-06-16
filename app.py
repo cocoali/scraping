@@ -247,116 +247,100 @@ class WebTextSearcher:
         }
 
     def _search_page(self, url, search_text, depth=0, results=None, auth=None):
-        """ページを検索し、結果を追加"""
+        """指定されたURLのページを検索"""
         if results is None:
             results = []
-            
-        if (url in self.visited_urls or 
-            depth > self.max_depth or 
-            len(self.visited_urls) >= self.max_pages):
+        
+        if url in self.visited_urls or depth > self.max_depth:
             return
-            
+        
         self.visited_urls.add(url)
-        print(f"ページを検索中: {url} (深さ: {depth})")
+        logging.info(f"ページ検索中: {url} (深さ: {depth})")
         
         try:
-            # ページを取得
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            if auth:
-                auth_str = f"{auth['username']}:{auth['password']}"
-                auth_bytes = auth_str.encode('ascii')
-                base64_bytes = base64.b64encode(auth_bytes)
-                headers['Authorization'] = f"Basic {base64_bytes.decode('ascii')}"
+            # 認証情報の検証
+            auth_tuple = None
+            if auth and isinstance(auth, dict):
+                username = auth.get('username')
+                password = auth.get('password')
+                if username and password:
+                    auth_tuple = (username, password)
             
-            response = self.session.get(url, timeout=self.timeout, headers=headers)
+            response = requests.get(url, headers=self.session.headers, auth=auth_tuple)
+            
+            # 認証エラーの処理
+            if response.status_code == 401:
+                logging.error(f"認証エラー: {url}")
+                results.append({
+                    'url': url,
+                    'title': '認証エラー',
+                    'depth': depth,
+                    'error': '認証に失敗しました。ユーザー名とパスワードを確認してください。',
+                    'requires_auth': True
+                })
+                return
+            
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # ページの検索結果を格納
-            page_results = {
-                'url': url,
-                'title': soup.find('title').get_text() if soup.find('title') else url,
-                'depth': depth,
-                'body_matches': [],
-                'head_matches': [],
-                'href_matches': []
-            }
+            # タイトルの取得
+            title = soup.title.string if soup.title else url
             
             # 本文の検索
-            text = soup.get_text()
-            clean_text = ' '.join(text.split())
-            if search_text.lower() in clean_text.lower():
-                highlighted_text = self._highlight_text(clean_text, search_text)
-                page_results['body_matches'] = [highlighted_text]
+            body_matches = []
+            for text in soup.stripped_strings:
+                if search_text in text:
+                    body_matches.append(text)
             
-            # headタグ内の検索
-            head = soup.find('head')
-            if head:
-                head_text = head.get_text()
-                if search_text.lower() in head_text.lower():
-                    highlighted_text = self._highlight_text(head_text, search_text)
-                    page_results['head_matches'] = [highlighted_text]
+            # ヘッダーの検索
+            head_matches = []
+            for header in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
+                if search_text in header.get_text():
+                    head_matches.append(header.get_text())
             
-            # href属性の検索
+            # リンクの検索
+            href_matches = []
             for link in soup.find_all('a', href=True):
-                href = link['href']
-                link_text = link.get_text().strip()
-                
-                try:
-                    # 相対URLを絶対URLに変換
-                    full_url = urljoin(url, href)
-                    normalized_url = full_url.rstrip('/')
+                if search_text in link.get_text():
+                    href_matches.append({
+                        'text': link.get_text(),
+                        'href': link['href'],
+                        'original_url': urljoin(url, link['href'])
+                    })
+            
+            # 結果の追加
+            if body_matches or head_matches or href_matches:
+                results.append({
+                    'url': url,
+                    'title': title,
+                    'depth': depth,
+                    'body_matches': body_matches,
+                    'head_matches': head_matches,
+                    'href_matches': href_matches
+                })
+            
+            # リンク先の検索
+            for link in soup.find_all('a', href=True):
+                link_url = urljoin(url, link['href'])
+                if link_url.startswith(('http://', 'https://')):
+                    self._search_page(link_url, search_text, depth + 1, results, auth)
                     
-                    # 検索テキストが数字の場合の特別な処理
-                    if search_text.isdigit():
-                        if f"/journal/{search_text}" in normalized_url:
-                            highlighted_url = self._highlight_text(full_url, search_text)
-                            highlighted_text = self._highlight_text(link_text, search_text) if link_text else highlighted_url
-                            page_results['href_matches'].append({
-                                'text': highlighted_text,
-                                'href': highlighted_url,
-                                'original_url': full_url,
-                                'page_url': url
-                            })
-                    # 通常のテキスト検索
-                    elif search_text.lower() in normalized_url.lower() or search_text.lower() in link_text.lower():
-                        highlighted_url = self._highlight_text(full_url, search_text)
-                        highlighted_text = self._highlight_text(link_text, search_text) if link_text else highlighted_url
-                        page_results['href_matches'].append({
-                            'text': highlighted_text,
-                            'href': highlighted_url,
-                            'original_url': full_url,
-                            'page_url': url
-                        })
-                except Exception as e:
-                    print(f"リンクの処理中にエラー: {href} - {str(e)}")
-                    continue
-            
-            # マッチがある場合のみ結果に追加
-            if any([page_results['body_matches'], page_results['head_matches'], page_results['href_matches']]):
-                # 同じURLの結果が既に存在する場合は、より深い階層の結果を優先
-                existing_result = next((r for r in results if r['url'] == url), None)
-                if existing_result is None or existing_result['depth'] > depth:
-                    if existing_result is not None:
-                        results.remove(existing_result)
-                    results.append(page_results)
-            
-            # 次の階層のリンクを取得
-            if depth < self.max_depth:
-                for link in soup.find_all('a', href=True):
-                    href = link['href']
-                    try:
-                        full_url = urljoin(url, href)
-                        if self._is_same_domain(full_url, url) and full_url not in self.visited_urls:
-                            self._search_page(full_url, search_text, depth + 1, results, auth)
-                    except Exception as e:
-                        print(f"リンクの処理中にエラー: {href} - {str(e)}")
-                        continue
-                        
+        except requests.exceptions.RequestException as e:
+            logging.error(f"リクエストエラー: {url} - {str(e)}")
+            results.append({
+                'url': url,
+                'title': 'エラー',
+                'depth': depth,
+                'error': str(e)
+            })
         except Exception as e:
-            print(f"ページの検索中にエラー: {url} - {str(e)}")
+            logging.error(f"予期せぬエラー: {url} - {str(e)}")
+            results.append({
+                'url': url,
+                'title': 'エラー',
+                'depth': depth,
+                'error': str(e)
+            })
 
 @app.route('/search', methods=['POST'], endpoint='search_post')
 @limiter.limit("10 per minute")
@@ -371,6 +355,16 @@ def search():
         return jsonify({'error': 'URLと検索テキストを入力してください。'})
     
     try:
+        # 認証情報の取得と検証
+        auth = None
+        username = request.form.get('username')
+        password = request.form.get('password')
+        if username and password:
+            auth = {
+                'username': username,
+                'password': password
+            }
+        
         # 検索履歴を読み込む
         history = []
         try:
@@ -381,7 +375,6 @@ def search():
                         if isinstance(history_data, list):
                             history = history_data
                         elif isinstance(history_data, dict):
-                            # 辞書形式の場合はリストに変換
                             history = []
                             for search_key, search_data in history_data.items():
                                 if isinstance(search_data, dict) and 'results' in search_data:
@@ -395,7 +388,6 @@ def search():
                         logging.error("検索履歴のJSONデコードに失敗しました")
                         history = []
             else:
-                # ファイルが存在しない場合は空のリストで初期化
                 history = []
                 with open('search_history.json', 'w', encoding='utf-8') as f:
                     json.dump(history, f, ensure_ascii=False, indent=2)
@@ -416,7 +408,7 @@ def search():
         
         # 検索を実行
         searcher = WebTextSearcher()
-        results = searcher.search(url, search_text)
+        results = searcher.search(url, search_text, auth=auth)
         
         # 検索結果を整形
         formatted_results = []
@@ -424,6 +416,17 @@ def search():
             if not isinstance(result, dict):
                 continue
                 
+            # 認証エラーの処理
+            if result.get('requires_auth'):
+                formatted_results.append({
+                    'url': result.get('url', ''),
+                    'title': result.get('title', ''),
+                    'depth': result.get('depth', 0),
+                    'error': result.get('error', ''),
+                    'requires_auth': True
+                })
+                continue
+            
             match_count = 0
             body_matches = result.get('body_matches', [])
             head_matches = result.get('head_matches', [])
@@ -442,7 +445,6 @@ def search():
             if head_matches:
                 snippets.extend(head_matches)
             
-            # href_matchesの各要素が辞書であることを保証し、リンクテキストとURLをセット
             href_snippets = []
             for h in href_matches:
                 try:
@@ -466,7 +468,8 @@ def search():
                 'body_matches': body_matches,
                 'head_matches': head_matches,
                 'href_matches': href_snippets,
-                'snippets': snippets
+                'snippets': snippets,
+                'error': result.get('error', '')
             })
         
         # 検索履歴に追加
@@ -477,7 +480,8 @@ def search():
             'total_urls': results.get('total_pages', 0),
             'total_results': len(formatted_results),
             'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'is_research': is_research
+            'is_research': is_research,
+            'requires_auth': any(result.get('requires_auth') for result in formatted_results)
         }
         
         # 前回の検索結果がある場合、未検索のURLを追加
@@ -525,7 +529,8 @@ def search():
             'total_results': len(formatted_results),
             'is_research': is_research,
             'skipped_urls': history_entry.get('skipped_urls', []),
-            'skipped_count': history_entry.get('skipped_count', 0)
+            'skipped_count': history_entry.get('skipped_count', 0),
+            'requires_auth': history_entry.get('requires_auth', False)
         }
         
         # エラーが発生した場合でも、部分的な結果がある場合はそれを含める
