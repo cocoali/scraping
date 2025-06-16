@@ -69,7 +69,7 @@ except Exception as e:
     raise
 
 # タイムアウトを設定
-app.config['TIMEOUT'] = int(os.environ.get('TIMEOUT', 200))
+app.config['TIMEOUT'] = int(os.environ.get('TIMEOUT', 500))
 
 # ユーザー認証用のデコレータ
 def login_required(f):
