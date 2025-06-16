@@ -265,8 +265,11 @@ class WebTextSearcher:
                 password = auth.get('password')
                 if username and password:
                     auth_tuple = (username, password)
+                    # セッションに認証情報を設定
+                    self.session.auth = auth_tuple
             
-            response = requests.get(url, headers=self.session.headers, auth=auth_tuple)
+            # セッションを使用してリクエストを送信
+            response = self.session.get(url, timeout=self.timeout)
             
             # 認証エラーの処理
             if response.status_code == 401:
