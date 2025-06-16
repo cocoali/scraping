@@ -251,43 +251,32 @@ class WebTextSearcher:
         if results is None:
             results = []
         
-        if url in self.visited_urls or depth > self.max_depth:
+        if url in self.visited_urls or depth > self.max_depth or len(self.visited_urls) >= self.max_pages:
             return
         
         self.visited_urls.add(url)
-        logging.info(f"ページ検索中: {url} (深さ: {depth})")
+        logging.info(f"ページ検索中: {url} (深さ: {depth}, 訪問済みURL数: {len(self.visited_urls)})")
         
         try:
-            # 認証情報の検証
-            auth_tuple = None
-            if auth and isinstance(auth, dict):
-                username = auth.get('username')
-                password = auth.get('password')
-                if username and password:
-                    auth_tuple = (username, password)
-                    # セッションに認証情報を設定
-                    self.session.auth = auth_tuple
+            # 認証情報の設定
+            if auth and isinstance(auth, dict) and 'username' in auth and 'password' in auth:
+                auth_tuple = (auth['username'], auth['password'])
+                self.session.auth = auth_tuple
+            else:
+                self.session.auth = None
             
-            # セッションを使用してリクエストを送信
             response = self.session.get(url, timeout=self.timeout)
-            
-            # 認証エラーの処理
-            if response.status_code == 401:
-                logging.error(f"認証エラー: {url}")
-                results.append({
-                    'url': url,
-                    'title': '認証エラー',
-                    'depth': depth,
-                    'error': '認証に失敗しました。ユーザー名とパスワードを確認してください。',
-                    'requires_auth': True
-                })
-                return
-            
             response.raise_for_status()
+            
+            # エンコーディングを適切に設定
+            if response.encoding == 'ISO-8859-1':
+                response.encoding = response.apparent_encoding
+            
             soup = BeautifulSoup(response.text, 'html.parser')
             
             # タイトルの取得
-            title = soup.title.string if soup.title else url
+            title = soup.find('title')
+            title = title.get_text() if title else "タイトルなし"
             
             # 本文の検索
             body_matches = []
@@ -295,19 +284,20 @@ class WebTextSearcher:
                 if search_text in text:
                     body_matches.append(text)
             
-            # ヘッダーの検索
+            # headタグ内の検索
             head_matches = []
-            for header in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6']):
-                if search_text in header.get_text():
-                    head_matches.append(header.get_text())
+            for meta in soup.find_all('meta'):
+                content = meta.get('content', '')
+                if search_text in content:
+                    head_matches.append(content)
             
-            # リンクの検索
+            # href属性の検索
             href_matches = []
             for link in soup.find_all('a', href=True):
                 if search_text in link.get_text():
                     href_matches.append({
                         'text': link.get_text(),
-                        'href': link['href'],
+                        'url': link['href'],
                         'original_url': urljoin(url, link['href'])
                     })
             
@@ -322,11 +312,14 @@ class WebTextSearcher:
                     'href_matches': href_matches
                 })
             
-            # リンク先の検索
-            for link in soup.find_all('a', href=True):
-                link_url = urljoin(url, link['href'])
-                if link_url.startswith(('http://', 'https://')):
-                    self._search_page(link_url, search_text, depth + 1, results, auth)
+            # リンク先の検索（max_pagesの制限を考慮）
+            if len(self.visited_urls) < self.max_pages:
+                for link in soup.find_all('a', href=True):
+                    if len(self.visited_urls) >= self.max_pages:
+                        break
+                    link_url = urljoin(url, link['href'])
+                    if link_url.startswith(('http://', 'https://')):
+                        self._search_page(link_url, search_text, depth + 1, results, auth)
                     
         except requests.exceptions.RequestException as e:
             logging.error(f"リクエストエラー: {url} - {str(e)}")
