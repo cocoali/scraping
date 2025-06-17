@@ -130,135 +130,189 @@ def history():
 
 class WebTextSearcher:
     def __init__(self):
-        self.timeout = 10
         self.visited_urls = set()
-        self.max_depth = 3
-        self.max_pages = 90
+        self.skipped_urls = set()
+        self.total_pages = 0
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
-        self.history_file = 'search_history.json'
-        self.search_history = {}
-        self.load_history()
 
-    def load_history(self):
-        """検索履歴を読み込む"""
-        try:
-            if os.path.exists(self.history_file):
-                with open(self.history_file, 'r', encoding='utf-8') as f:
-                    try:
-                        history_data = json.load(f)
-                        if isinstance(history_data, dict):
-                            self.search_history = history_data
-                        elif isinstance(history_data, list):
-                            # リスト形式の場合は辞書形式に変換
-                            self.search_history = {}
-                            for entry in history_data:
-                                if isinstance(entry, dict) and 'search_text' in entry:
-                                    self.search_history[entry['search_text']] = {
-                                        'urls': entry.get('urls', []),
-                                        'results': entry.get('results', []),
-                                        'last_updated': entry.get('last_updated', datetime.now().isoformat())
-                                    }
-                        else:
-                            self.search_history = {}
-                    except json.JSONDecodeError:
-                        logging.error("検索履歴のJSONデコードに失敗しました")
-                        self.search_history = {}
-            else:
-                self.search_history = {}
-                self.save_history()
-        except Exception as e:
-            logging.error(f"検索履歴の読み込み中にエラー: {str(e)}")
-            self.search_history = {}
-
-    def save_history(self):
-        """検索履歴を保存"""
-        try:
-            with open(self.history_file, 'w', encoding='utf-8') as f:
-                json.dump(self.search_history, f, ensure_ascii=False, indent=2)
-        except Exception as e:
-            logging.error(f"検索履歴の保存中にエラー: {str(e)}")
-
-    def _highlight_text(self, text, search_text):
-        """検索テキストをハイライト表示"""
-        pattern = re.compile(re.escape(search_text), re.IGNORECASE)
-        return pattern.sub(lambda m: f'<mark>{m.group()}</mark>', text)
-
-    def _is_same_domain(self, url, base_url):
-        """同じドメインかチェック"""
-        try:
-            return urlparse(url).netloc == urlparse(base_url).netloc
-        except:
-            return False
-
-    def search(self, url, search_text, auth=None, skip_visited=True):
-        """指定されたURLから検索を開始"""
-        logging.info(f"検索開始: URL={url}, 検索テキスト={search_text}")
-        self.visited_urls = set()
-        results = []
-        error_occurred = False
-        error_message = None
+    def search(self, url, search_text, is_research=False, username=None, password=None):
+        """指定されたURLから検索テキストを探す"""
+        self.visited_urls.clear()
+        self.skipped_urls.clear()
+        self.total_pages = 0
         
-        # 認証情報の検証
-        if auth and isinstance(auth, dict):
-            if not auth.get('username') or not auth.get('password'):
-                error_occurred = True
-                error_message = "認証情報が不完全です。ユーザー名とパスワードを入力してください。"
-                return {
-                    'success': False,
-                    'results': results,
-                    'total_pages': 0,
-                    'error': error_message,
-                    'requires_auth': True
-                }
-        
-        # 検索履歴から既に検索済みのURLを取得
-        if skip_visited and search_text in self.search_history:
+        # 認証情報の設定
+        if username and password:
+            self.session.auth = (username, password)
+        else:
+            self.session.auth = None
+
+        try:
+            # 検索履歴を読み込む
+            history = []
             try:
-                history_entry = self.search_history[search_text]
-                if isinstance(history_entry, dict) and 'urls' in history_entry:
-                    self.visited_urls.update(history_entry['urls'])
-                    logging.info(f"既に検索済みのURL数: {len(self.visited_urls)}")
+                if os.path.exists('search_history.json'):
+                    with open('search_history.json', 'r', encoding='utf-8') as f:
+                        try:
+                            history_data = json.load(f)
+                            if isinstance(history_data, list):
+                                history = history_data
+                            elif isinstance(history_data, dict):
+                                history = []
+                                for search_key, search_data in history_data.items():
+                                    if isinstance(search_data, dict) and 'results' in search_data:
+                                        history.append({
+                                            'search_text': search_key,
+                                            'results': search_data.get('results', []),
+                                            'last_updated': search_data.get('last_updated', ''),
+                                            'urls': search_data.get('urls', [])
+                                        })
+                        except json.JSONDecodeError:
+                            logging.error("検索履歴のJSONデコードに失敗しました")
+                            history = []
+                else:
+                    history = []
+                    with open('search_history.json', 'w', encoding='utf-8') as f:
+                        json.dump(history, f, ensure_ascii=False, indent=2)
             except Exception as e:
-                logging.error(f"検索履歴の処理中にエラー: {str(e)}")
-        
-        try:
-            self._search_page(url, search_text, depth=0, results=results, auth=auth)
+                logging.error(f"検索履歴の読み込み中にエラー: {str(e)}")
+                history = []
+
+            # 前回の検索結果を取得
+            previous_results = None
+            if is_research and isinstance(history, list) and len(history) > 0:
+                try:
+                    previous_results = history[0]
+                    if not isinstance(previous_results, dict):
+                        previous_results = None
+                except (IndexError, TypeError, KeyError) as e:
+                    logging.error(f"前回の検索結果の取得中にエラー: {str(e)}")
+                    previous_results = None
+
+            # 検索を実行
+            results = self._search_page(url, search_text, 0, previous_results)
             
-            # 検索履歴を更新
-            if search_text not in self.search_history:
-                self.search_history[search_text] = {
-                    'urls': [],
-                    'results': [],
-                    'last_updated': datetime.now().isoformat()
-                }
+            # 検索結果を整形
+            formatted_results = []
+            for result in results.get('results', []):
+                if not isinstance(result, dict):
+                    continue
+                    
+                # 認証エラーの処理
+                if result.get('requires_auth'):
+                    formatted_results.append({
+                        'url': result.get('url', ''),
+                        'title': result.get('title', ''),
+                        'depth': result.get('depth', 0),
+                        'error': result.get('error', ''),
+                        'requires_auth': True
+                    })
+                    continue
+                
+                match_count = 0
+                body_matches = result.get('body_matches', [])
+                head_matches = result.get('head_matches', [])
+                href_matches = result.get('href_matches', [])
+                
+                if body_matches:
+                    match_count += len(body_matches)
+                if head_matches:
+                    match_count += len(head_matches)
+                if href_matches:
+                    match_count += len(href_matches)
+                
+                snippets = []
+                if body_matches:
+                    snippets.extend(body_matches)
+                if head_matches:
+                    snippets.extend(head_matches)
+                
+                href_snippets = []
+                for h in href_matches:
+                    try:
+                        if isinstance(h, dict):
+                            text = h.get('text', '')
+                            url_val = h.get('original_url', h.get('href', ''))
+                            href_snippets.append({'text': text, 'url': url_val})
+                        elif isinstance(h, str):
+                            href_snippets.append({'text': h, 'url': h})
+                        else:
+                            continue
+                    except Exception as e:
+                        logging.error(f"href_matchの処理中にエラー: {str(e)}")
+                        continue
+                
+                formatted_results.append({
+                    'url': result.get('url', ''),
+                    'title': result.get('title', '') or result.get('url', ''),
+                    'depth': result.get('depth', 0),
+                    'matches': match_count,
+                    'body_matches': body_matches,
+                    'head_matches': head_matches,
+                    'href_matches': href_snippets,
+                    'snippets': snippets,
+                    'error': result.get('error', '')
+                })
             
-            # 新しい結果を追加
-            self.search_history[search_text]['urls'].extend(list(self.visited_urls))
-            self.search_history[search_text]['results'].extend(results)
-            self.search_history[search_text]['last_updated'] = datetime.now().isoformat()
+            # 検索履歴に追加
+            history_entry = {
+                'search_text': search_text,
+                'base_url': url,
+                'results': formatted_results,
+                'total_urls': results.get('total_pages', 0),
+                'total_results': len(formatted_results),
+                'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'is_research': is_research,
+                'requires_auth': any(result.get('requires_auth') for result in formatted_results)
+            }
             
-            # 重複を除去
-            self.search_history[search_text]['urls'] = list(set(self.search_history[search_text]['urls']))
+            # 前回の検索結果がある場合、未検索のURLを追加
+            if is_research and previous_results and isinstance(previous_results, dict):
+                try:
+                    previous_urls = set()
+                    if 'results' in previous_results and isinstance(previous_results['results'], list):
+                        previous_urls = {
+                            result['url'] 
+                            for result in previous_results['results'] 
+                            if isinstance(result, dict) and 'url' in result
+                        }
+                    
+                    new_urls = {
+                        result['url'] 
+                        for result in formatted_results 
+                        if isinstance(result, dict) and 'url' in result
+                    }
+                    skipped_urls = previous_urls - new_urls
+                    
+                    if skipped_urls:
+                        history_entry['skipped_urls'] = list(skipped_urls)
+                        history_entry['skipped_count'] = len(skipped_urls)
+                except Exception as e:
+                    logging.error(f"前回の結果との比較中にエラー: {str(e)}")
             
-            self.save_history()
+            # 履歴を更新（リスト形式で保存）
+            if not isinstance(history, list):
+                history = []
             
+            history.insert(0, history_entry)
+            
+            # 履歴を保存（最新の10件のみ保持）
+            try:
+                with open('search_history.json', 'w', encoding='utf-8') as f:
+                    json.dump(history[:10], f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logging.error(f"履歴保存中にエラー: {str(e)}")
+            
+            return formatted_results
+
         except Exception as e:
-            error_occurred = True
-            error_message = str(e)
-            logging.error(f"検索中にエラー: {error_message}")
-        
-        # 結果を返す（エラーが発生していても、取得済みのデータを返す）
-        return {
-            'success': not error_occurred,
-            'results': results,
-            'total_pages': len(self.visited_urls),
-            'error': error_message if error_occurred else None,
-            'partial_results': error_occurred and len(results) > 0,
-            'requires_auth': error_occurred and '認証' in error_message
-        }
+            logging.error(f"検索処理中にエラー: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {'error': str(e)}
 
     def _search_page(self, url, search_text, depth=0, results=None, auth=None):
         """指定されたURLのページを検索"""
