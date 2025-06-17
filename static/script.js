@@ -18,6 +18,14 @@ document.addEventListener('DOMContentLoaded', function () {
         element.textContent = `マッチ数: ${element.textContent.split(':')[1].trim().split(' ')[0]} ${isHidden ? '▲' : '▼'}`;
     };
 
+    // 認証フォームの表示/非表示を制御する関数
+    function toggleAuthForm(show) {
+        authForm.style.display = show ? 'block' : 'none';
+    }
+
+    // 初期状態では認証フォームを非表示
+    toggleAuthForm(false);
+
     // 検索履歴を読み込む
     loadSearchHistory();
 
@@ -69,13 +77,14 @@ document.addEventListener('DOMContentLoaded', function () {
                         </div>
                     `;
                     // 認証フォームを表示
-                    authForm.style.display = 'block';
+                    toggleAuthForm(true);
                 } else {
                     resultsDiv.innerHTML = `<div class="error">${data.error}</div>`;
+                    toggleAuthForm(false);
                 }
             } else {
                 // 認証フォームを非表示
-                authForm.style.display = 'none';
+                toggleAuthForm(false);
                 
                 // 検索結果を表示
                 let html = '';
@@ -162,6 +171,7 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         } catch (error) {
             resultsDiv.innerHTML = `<div class="error">エラーが発生しました: ${error.message}</div>`;
+            toggleAuthForm(false);
         } finally {
             searchBtn.disabled = false;
         }
