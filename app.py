@@ -152,7 +152,7 @@ class WebTextSearcher:
         except:
             return False
 
-    def _search_page(self, url, search_text, depth=0, previous_results=None):
+    def _search_page(self, url, search_text, depth=0):
         """指定されたURLから検索テキストを探す"""
         if url in self.visited_urls or depth > self.max_depth or len(self.visited_urls) >= self.max_pages:
             return {'results': []}
@@ -230,7 +230,7 @@ class WebTextSearcher:
                         try:
                             absolute_url = urljoin(url, href)
                             if self._is_same_domain(absolute_url, url) and absolute_url not in self.visited_urls:
-                                sub_results = self._search_page(absolute_url, search_text, depth + 1, previous_results)
+                                sub_results = self._search_page(absolute_url, search_text, depth + 1)
                                 if sub_results and 'results' in sub_results:
                                     results.extend(sub_results['results'])
                         except:
@@ -259,49 +259,8 @@ class WebTextSearcher:
             self.session.auth = None
 
         try:
-            # 検索履歴を読み込む
-            history = []
-            try:
-                if os.path.exists('search_history.json'):
-                    with open('search_history.json', 'r', encoding='utf-8') as f:
-                        try:
-                            history_data = json.load(f)
-                            if isinstance(history_data, list):
-                                history = history_data
-                            elif isinstance(history_data, dict):
-                                history = []
-                                for search_key, search_data in history_data.items():
-                                    if isinstance(search_data, dict) and 'results' in search_data:
-                                        history.append({
-                                            'search_text': search_key,
-                                            'results': search_data.get('results', []),
-                                            'last_updated': search_data.get('last_updated', ''),
-                                            'urls': search_data.get('urls', [])
-                                        })
-                        except json.JSONDecodeError:
-                            logging.error("検索履歴のJSONデコードに失敗しました")
-                            history = []
-                else:
-                    history = []
-                    with open('search_history.json', 'w', encoding='utf-8') as f:
-                        json.dump(history, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                logging.error(f"検索履歴の読み込み中にエラー: {str(e)}")
-                history = []
-
-            # 前回の検索結果を取得
-            previous_results = None
-            if is_research and isinstance(history, list) and len(history) > 0:
-                try:
-                    previous_results = history[0]
-                    if not isinstance(previous_results, dict):
-                        previous_results = None
-                except (IndexError, TypeError, KeyError) as e:
-                    logging.error(f"前回の検索結果の取得中にエラー: {str(e)}")
-                    previous_results = None
-
             # 検索を実行
-            results = self._search_page(url, search_text, 0, previous_results)
+            results = self._search_page(url, search_text, 0)
             
             if not results or 'results' not in results:
                 return {'error': '検索結果の取得に失敗しました'}
@@ -368,55 +327,6 @@ class WebTextSearcher:
                     'error': result.get('error', '')
                 })
             
-            # 検索履歴に追加
-            history_entry = {
-                'search_text': search_text,
-                'base_url': url,
-                'results': formatted_results,
-                'total_urls': self.total_pages,
-                'total_results': len(formatted_results),
-                'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'is_research': is_research,
-                'requires_auth': any(result.get('requires_auth') for result in formatted_results)
-            }
-            
-            # 前回の検索結果がある場合、未検索のURLを追加
-            if is_research and previous_results and isinstance(previous_results, dict):
-                try:
-                    previous_urls = set()
-                    if 'results' in previous_results and isinstance(previous_results['results'], list):
-                        previous_urls = {
-                            result['url'] 
-                            for result in previous_results['results'] 
-                            if isinstance(result, dict) and 'url' in result
-                        }
-                    
-                    new_urls = {
-                        result['url'] 
-                        for result in formatted_results 
-                        if isinstance(result, dict) and 'url' in result
-                    }
-                    skipped_urls = previous_urls - new_urls
-                    
-                    if skipped_urls:
-                        history_entry['skipped_urls'] = list(skipped_urls)
-                        history_entry['skipped_count'] = len(skipped_urls)
-                except Exception as e:
-                    logging.error(f"前回の結果との比較中にエラー: {str(e)}")
-            
-            # 履歴を更新（リスト形式で保存）
-            if not isinstance(history, list):
-                history = []
-            
-            history.insert(0, history_entry)
-            
-            # 履歴を保存（最新の10件のみ保持）
-            try:
-                with open('search_history.json', 'w', encoding='utf-8') as f:
-                    json.dump(history[:10], f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                logging.error(f"履歴保存中にエラー: {str(e)}")
-            
             return formatted_results
 
         except Exception as e:
@@ -465,8 +375,7 @@ def search():
         return jsonify({
             'results': results,
             'total_pages': searcher.total_pages,
-            'is_research': is_research,
-            'skipped_count': len(searcher.skipped_urls)
+            'is_research': is_research
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
