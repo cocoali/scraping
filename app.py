@@ -201,6 +201,19 @@ class WebTextSearcher:
         error_occurred = False
         error_message = None
         
+        # 認証情報の検証
+        if auth and isinstance(auth, dict):
+            if not auth.get('username') or not auth.get('password'):
+                error_occurred = True
+                error_message = "認証情報が不完全です。ユーザー名とパスワードを入力してください。"
+                return {
+                    'success': False,
+                    'results': results,
+                    'total_pages': 0,
+                    'error': error_message,
+                    'requires_auth': True
+                }
+        
         # 検索履歴から既に検索済みのURLを取得
         if skip_visited and search_text in self.search_history:
             try:
@@ -243,7 +256,8 @@ class WebTextSearcher:
             'results': results,
             'total_pages': len(self.visited_urls),
             'error': error_message if error_occurred else None,
-            'partial_results': error_occurred and len(results) > 0
+            'partial_results': error_occurred and len(results) > 0,
+            'requires_auth': error_occurred and '認証' in error_message
         }
 
     def _search_page(self, url, search_text, depth=0, results=None, auth=None):
@@ -262,10 +276,24 @@ class WebTextSearcher:
             if auth and isinstance(auth, dict) and 'username' in auth and 'password' in auth:
                 auth_tuple = (auth['username'], auth['password'])
                 self.session.auth = auth_tuple
+                logging.info(f"認証情報を設定: {auth['username']}")
             else:
                 self.session.auth = None
             
             response = self.session.get(url, timeout=self.timeout)
+            
+            # 認証エラーの処理
+            if response.status_code == 401:
+                logging.error(f"認証エラー: {url}")
+                results.append({
+                    'url': url,
+                    'title': '認証エラー',
+                    'depth': depth,
+                    'error': '認証に失敗しました。ユーザー名とパスワードを確認してください。',
+                    'requires_auth': True
+                })
+                return
+            
             response.raise_for_status()
             
             # エンコーディングを適切に設定

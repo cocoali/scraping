@@ -27,28 +27,51 @@ document.addEventListener('DOMContentLoaded', function () {
         const searchText = document.getElementById('search_text').value;
         const isResearch = searchBtn.textContent.includes('再検索');
         
+        // 認証情報の取得
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+        
         // ローディング表示
         searchBtn.disabled = true;
         searchBtn.textContent = '検索中...';
         resultsDiv.innerHTML = '<div class="loading">検索中...</div>';
         
         try {
+            const formData = new URLSearchParams({
+                url: url,
+                search_text: searchText,
+                is_research: isResearch
+            });
+            
+            // 認証情報がある場合は追加
+            if (username && password) {
+                formData.append('username', username);
+                formData.append('password', password);
+            }
+            
             const response = await fetch('/search', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/x-www-form-urlencoded',
                 },
-                body: new URLSearchParams({
-                    url: url,
-                    search_text: searchText,
-                    is_research: isResearch
-                })
+                body: formData
             });
             
             const data = await response.json();
             
             if (data.error) {
-                resultsDiv.innerHTML = `<div class="error">${data.error}</div>`;
+                if (data.requires_auth) {
+                    resultsDiv.innerHTML = `
+                        <div class="error">
+                            <p>${data.error}</p>
+                            <p>認証情報を入力してください。</p>
+                        </div>
+                    `;
+                    // 認証フォームを表示
+                    document.getElementById('auth-form').style.display = 'block';
+                } else {
+                    resultsDiv.innerHTML = `<div class="error">${data.error}</div>`;
+                }
             } else {
                 // 検索結果を表示
                 let html = '';
@@ -69,51 +92,50 @@ document.addEventListener('DOMContentLoaded', function () {
                         }
                         resultsByDepth[depth].push(result);
                     });
-
-                    // 階層ごとに結果を表示
+                    
+                    // 各階層の結果を表示
                     Object.keys(resultsByDepth).sort((a, b) => Number(a) - Number(b)).forEach(depth => {
                         const results = resultsByDepth[depth];
-                        html += `<div class="depth-section">
-                            <h3>階層 ${depth}</h3>
-                            <div class="results-grid">`;
-                        
-                        results.forEach(result => {
-                            html += `
-                                <div class="result-item">
-                                    <h4><a href="${result.url}" target="_blank">${result.title}</a></h4>
-                                    <p class="url">${result.url}</p>
-                                    <div class="matches-section">
-                                        <p class="matches">マッチ数: ${result.matches}</p>
-                                        <div class="matches-details">
-                                            ${result.body_matches.length > 0 ? `
-                                                <div class="match-section">
-                                                    <h5>本文の一致</h5>
-                                                    ${result.body_matches.map(match => `<div class="match">${match}</div>`).join('')}
-                                                </div>
-                                            ` : ''}
-                                            ${result.head_matches.length > 0 ? `
-                                                <div class="match-section">
-                                                    <h5>ヘッダーの一致</h5>
-                                                    ${result.head_matches.map(match => `<div class="match">${match}</div>`).join('')}
-                                                </div>
-                                            ` : ''}
-                                            ${result.href_matches.length > 0 ? `
-                                                <div class="match-section">
-                                                    <h5>リンクの一致</h5>
-                                                    ${result.href_matches.map(match => `
-                                                        <div class="match">
-                                                            <a href="${match.url}" target="_blank">${match.text}</a>
-                                                        </div>
-                                                    `).join('')}
-                                                </div>
-                                            ` : ''}
+                        html += `
+                            <div class="depth-section">
+                                <h3>深さ ${depth} の結果</h3>
+                                <div class="results">
+                                    ${results.map(result => `
+                                        <div class="result">
+                                            <h4><a href="${result.url}" target="_blank">${result.title}</a></h4>
+                                            <div class="matches">
+                                                ${result.body_matches && result.body_matches.length > 0 ? `
+                                                    <div class="match-section">
+                                                        <h5>本文の一致</h5>
+                                                        ${result.body_matches.map(match => `
+                                                            <div class="match">${match}</div>
+                                                        `).join('')}
+                                                    </div>
+                                                ` : ''}
+                                                ${result.head_matches && result.head_matches.length > 0 ? `
+                                                    <div class="match-section">
+                                                        <h5>headタグ内の一致</h5>
+                                                        ${result.head_matches.map(match => `
+                                                            <div class="match">${match}</div>
+                                                        `).join('')}
+                                                    </div>
+                                                ` : ''}
+                                                ${result.href_matches && result.href_matches.length > 0 ? `
+                                                    <div class="match-section">
+                                                        <h5>リンクの一致</h5>
+                                                        ${result.href_matches.map(match => `
+                                                            <div class="match">
+                                                                <a href="${match.url}" target="_blank">${match.text}</a>
+                                                            </div>
+                                                        `).join('')}
+                                                    </div>
+                                                ` : ''}
+                                            </div>
                                         </div>
-                                    </div>
+                                    `).join('')}
                                 </div>
-                            `;
-                        });
-                        
-                        html += `</div></div>`;
+                            </div>
+                        `;
                     });
                 }
                 

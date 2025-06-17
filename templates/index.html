@@ -18,7 +18,7 @@
             </div>
         </div>
 
-        <form id="searchForm">
+        <form id="search-form">
             <div class="form-group">
                 <label for="url">URL:</label>
                 <input type="url" id="url" name="url" required placeholder="https://example.com">
@@ -26,21 +26,23 @@
 
             <div class="form-group">
                 <label for="search_text">検索テキスト:</label>
-                <input type="text" id="search_text" name="search_text" required>
+                <input type="text" id="search_text" name="search_text" required maxlength="100">
+            </div>
+
+            <div id="auth-form" class="form-group" style="display: none;">
+                <h3>Basic認証</h3>
+                <div class="form-group">
+                    <label for="username">ユーザー名:</label>
+                    <input type="text" id="username" name="username">
+                </div>
+                <div class="form-group">
+                    <label for="password">パスワード:</label>
+                    <input type="password" id="password" name="password">
+                </div>
             </div>
 
             <div class="form-group">
-                <label for="username">ユーザー名（オプション）:</label>
-                <input type="text" id="username" name="username">
-            </div>
-
-            <div class="form-group">
-                <label for="password">パスワード（オプション）:</label>
-                <input type="password" id="password" name="password">
-            </div>
-
-            <div class="form-group">
-                <button type="submit" id="searchBtn">🔍 検索</button>
+                <button type="submit" id="search-btn">🔍 検索</button>
             </div>
         </form>
 
