@@ -1,11 +1,12 @@
 document.addEventListener('DOMContentLoaded', function () {
-    const searchForm = document.getElementById('searchForm');
+    const searchForm = document.getElementById('search-form');
     const statusDiv = document.getElementById('status');
     const resultsDiv = document.getElementById('results');
-    const searchBtn = document.getElementById('searchBtn');
+    const searchBtn = document.getElementById('search-btn');
     const spinner = document.getElementById('loadingSpinner');
     const loadingDiv = document.getElementById('loading');
-    const searchHistoryDiv = document.getElementById('searchHistory');
+    const searchHistoryDiv = document.getElementById('search-history');
+    const authForm = document.getElementById('auth-form');
     let currentSearchText = '';
     let currentUrl = '';
 
@@ -68,11 +69,14 @@ document.addEventListener('DOMContentLoaded', function () {
                         </div>
                     `;
                     // 認証フォームを表示
-                    document.getElementById('auth-form').style.display = 'block';
+                    authForm.style.display = 'block';
                 } else {
                     resultsDiv.innerHTML = `<div class="error">${data.error}</div>`;
                 }
             } else {
+                // 認証フォームを非表示
+                authForm.style.display = 'none';
+                
                 // 検索結果を表示
                 let html = '';
                 
@@ -343,7 +347,7 @@ document.addEventListener('DOMContentLoaded', function () {
         document.getElementById('search_text').value = searchText;
         
         // 検索ボタンのテキストを更新
-        const searchBtn = document.getElementById('searchBtn');
+        const searchBtn = document.getElementById('search-btn');
         searchBtn.textContent = '🔍 再検索';
         
         // 検索を実行
