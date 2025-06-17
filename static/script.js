@@ -68,7 +68,6 @@ document.addEventListener('DOMContentLoaded', function () {
         const searchText = document.getElementById('search_text').value;
         const username = document.getElementById('username').value;
         const password = document.getElementById('password').value;
-        const isResearch = searchBtn.textContent.includes('再検索');
         
         // ローディング表示
         searchBtn.disabled = true;
@@ -78,8 +77,7 @@ document.addEventListener('DOMContentLoaded', function () {
         try {
             const formData = new URLSearchParams({
                 url: url,
-                search_text: searchText,
-                is_research: isResearch
+                search_text: searchText
             });
 
             // 認証情報がある場合のみ追加
@@ -115,10 +113,6 @@ document.addEventListener('DOMContentLoaded', function () {
             } else {
                 // 検索結果を表示
                 let html = '';
-                
-                if (data.is_research && data.skipped_count > 0) {
-                    html += `<div class="info">前回の検索でスキップされた${data.skipped_count}件のURLを検索しました。</div>`;
-                }
                 
                 if (data.results.length === 0) {
                     html += '<div class="no-results">検索結果が見つかりませんでした。</div>';
@@ -188,18 +182,12 @@ document.addEventListener('DOMContentLoaded', function () {
                 `;
                 
                 resultsDiv.innerHTML = html;
-                
-                // 検索ボタンのテキストを更新
-                if (data.is_research) {
-                    searchBtn.textContent = '🔍 未検索ページを検索';
-                } else {
-                    searchBtn.textContent = '🔍 検索';
-                }
             }
         } catch (error) {
             resultsDiv.innerHTML = `<div class="error">エラーが発生しました: ${error.message}</div>`;
         } finally {
             searchBtn.disabled = false;
+            searchBtn.textContent = '🔍 検索';
         }
     });
 
