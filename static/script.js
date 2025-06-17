@@ -7,6 +7,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const loadingDiv = document.getElementById('loading');
     const searchHistoryDiv = document.getElementById('search-history');
     const authForm = document.getElementById('auth-form');
+    const usernameInput = document.getElementById('username');
+    const passwordInput = document.getElementById('password');
     let currentSearchText = '';
     let currentUrl = '';
 
@@ -29,6 +31,36 @@ document.addEventListener('DOMContentLoaded', function () {
     // 検索履歴を読み込む
     loadSearchHistory();
 
+    // URLが変更されたときに認証フォームの表示を制御
+    document.getElementById('url').addEventListener('change', function() {
+        const url = this.value;
+        if (url) {
+            // 認証が必要なサイトかどうかを確認
+            fetch('/check_auth', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                },
+                body: new URLSearchParams({ url: url })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.requires_auth) {
+                    authForm.style.display = 'block';
+                    usernameInput.required = true;
+                    passwordInput.required = true;
+                } else {
+                    authForm.style.display = 'none';
+                    usernameInput.required = false;
+                    passwordInput.required = false;
+                }
+            })
+            .catch(error => {
+                console.error('認証チェックエラー:', error);
+            });
+        }
+    });
+
     searchForm.addEventListener('submit', async function (e) {
         e.preventDefault();
         
@@ -47,10 +79,14 @@ document.addEventListener('DOMContentLoaded', function () {
             const formData = new URLSearchParams({
                 url: url,
                 search_text: searchText,
-                is_research: isResearch,
-                username: username,
-                password: password
+                is_research: isResearch
             });
+
+            // 認証情報がある場合のみ追加
+            if (username && password) {
+                formData.append('username', username);
+                formData.append('password', password);
+            }
             
             const response = await fetch('/search', {
                 method: 'POST',
@@ -63,7 +99,19 @@ document.addEventListener('DOMContentLoaded', function () {
             const data = await response.json();
             
             if (data.error) {
-                resultsDiv.innerHTML = `<div class="error">${data.error}</div>`;
+                if (data.requires_auth) {
+                    resultsDiv.innerHTML = `
+                        <div class="error">
+                            <p>${data.error}</p>
+                            <p>認証情報を入力してください。</p>
+                        </div>
+                    `;
+                    authForm.style.display = 'block';
+                    usernameInput.required = true;
+                    passwordInput.required = true;
+                } else {
+                    resultsDiv.innerHTML = `<div class="error">${data.error}</div>`;
+                }
             } else {
                 // 検索結果を表示
                 let html = '';
