@@ -34,11 +34,9 @@ document.addEventListener('DOMContentLoaded', function () {
         
         const url = document.getElementById('url').value;
         const searchText = document.getElementById('search_text').value;
-        const isResearch = searchBtn.textContent.includes('再検索');
-        
-        // 認証情報の取得
         const username = document.getElementById('username').value;
         const password = document.getElementById('password').value;
+        const isResearch = searchBtn.textContent.includes('再検索');
         
         // ローディング表示
         searchBtn.disabled = true;
@@ -49,14 +47,10 @@ document.addEventListener('DOMContentLoaded', function () {
             const formData = new URLSearchParams({
                 url: url,
                 search_text: searchText,
-                is_research: isResearch
+                is_research: isResearch,
+                username: username,
+                password: password
             });
-            
-            // 認証情報がある場合は追加
-            if (username && password) {
-                formData.append('username', username);
-                formData.append('password', password);
-            }
             
             const response = await fetch('/search', {
                 method: 'POST',
@@ -69,23 +63,8 @@ document.addEventListener('DOMContentLoaded', function () {
             const data = await response.json();
             
             if (data.error) {
-                if (data.requires_auth) {
-                    resultsDiv.innerHTML = `
-                        <div class="error">
-                            <p>${data.error}</p>
-                            <p>認証情報を入力してください。</p>
-                        </div>
-                    `;
-                    // 認証フォームを表示
-                    toggleAuthForm(true);
-                } else {
-                    resultsDiv.innerHTML = `<div class="error">${data.error}</div>`;
-                    toggleAuthForm(false);
-                }
+                resultsDiv.innerHTML = `<div class="error">${data.error}</div>`;
             } else {
-                // 認証フォームを非表示
-                toggleAuthForm(false);
-                
                 // 検索結果を表示
                 let html = '';
                 
@@ -171,7 +150,6 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         } catch (error) {
             resultsDiv.innerHTML = `<div class="error">エラーが発生しました: ${error.message}</div>`;
-            toggleAuthForm(false);
         } finally {
             searchBtn.disabled = false;
         }
