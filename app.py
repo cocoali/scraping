@@ -133,6 +133,8 @@ class WebTextSearcher:
         self.visited_urls = set()
         self.skipped_urls = set()
         self.total_pages = 0
+        self.max_depth = 3  # 最大深さを設定
+        self.max_pages = 90  # 最大ページ数を設定
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
