@@ -133,12 +133,118 @@ class WebTextSearcher:
         self.visited_urls = set()
         self.skipped_urls = set()
         self.total_pages = 0
-        self.max_depth = 3  # 最大深さを設定
-        self.max_pages = 90  # 最大ページ数を設定
+        self.max_depth = 3
+        self.max_pages = 90
         self.session = requests.Session()
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         })
+
+    def _highlight_text(self, text, search_text):
+        """検索テキストをハイライト表示"""
+        pattern = re.compile(re.escape(search_text), re.IGNORECASE)
+        return pattern.sub(lambda m: f'<mark>{m.group()}</mark>', text)
+
+    def _is_same_domain(self, url, base_url):
+        """同じドメインかチェック"""
+        try:
+            return urlparse(url).netloc == urlparse(base_url).netloc
+        except:
+            return False
+
+    def _search_page(self, url, search_text, depth=0, previous_results=None):
+        """指定されたURLから検索テキストを探す"""
+        if url in self.visited_urls or depth > self.max_depth or len(self.visited_urls) >= self.max_pages:
+            return {'results': []}
+
+        self.visited_urls.add(url)
+        self.total_pages += 1
+        results = []
+
+        try:
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+
+            # 認証エラーのチェック
+            if response.status_code == 401:
+                return {
+                    'results': [{
+                        'url': url,
+                        'title': '認証エラー',
+                        'depth': depth,
+                        'error': '認証が必要です',
+                        'requires_auth': True
+                    }]
+                }
+
+            soup = BeautifulSoup(response.text, 'html.parser')
+            title = soup.title.string if soup.title else url
+
+            # 本文の検索
+            body_matches = []
+            for text in soup.stripped_strings:
+                if search_text.lower() in text.lower():
+                    highlighted = self._highlight_text(text, search_text)
+                    body_matches.append(highlighted)
+
+            # headタグ内の検索
+            head_matches = []
+            for meta in soup.find_all('meta'):
+                content = meta.get('content', '')
+                if search_text.lower() in content.lower():
+                    highlighted = self._highlight_text(content, search_text)
+                    head_matches.append(highlighted)
+
+            # リンクの検索
+            href_matches = []
+            for link in soup.find_all('a'):
+                href = link.get('href')
+                if href:
+                    try:
+                        absolute_url = urljoin(url, href)
+                        if self._is_same_domain(absolute_url, url):
+                            text = link.get_text(strip=True)
+                            if search_text.lower() in text.lower():
+                                href_matches.append({
+                                    'text': self._highlight_text(text, search_text),
+                                    'url': absolute_url
+                                })
+                    except:
+                        continue
+
+            if body_matches or head_matches or href_matches:
+                results.append({
+                    'url': url,
+                    'title': title,
+                    'depth': depth,
+                    'body_matches': body_matches,
+                    'head_matches': head_matches,
+                    'href_matches': href_matches
+                })
+
+            # 再帰的にリンクを検索
+            if depth < self.max_depth and len(self.visited_urls) < self.max_pages:
+                for link in soup.find_all('a'):
+                    href = link.get('href')
+                    if href:
+                        try:
+                            absolute_url = urljoin(url, href)
+                            if self._is_same_domain(absolute_url, url) and absolute_url not in self.visited_urls:
+                                sub_results = self._search_page(absolute_url, search_text, depth + 1, previous_results)
+                                if sub_results and 'results' in sub_results:
+                                    results.extend(sub_results['results'])
+                        except:
+                            continue
+
+        except requests.exceptions.RequestException as e:
+            results.append({
+                'url': url,
+                'title': 'エラー',
+                'depth': depth,
+                'error': str(e)
+            })
+
+        return {'results': results}
 
     def search(self, url, search_text, is_research=False, username=None, password=None):
         """指定されたURLから検索テキストを探す"""
@@ -197,9 +303,12 @@ class WebTextSearcher:
             # 検索を実行
             results = self._search_page(url, search_text, 0, previous_results)
             
+            if not results or 'results' not in results:
+                return {'error': '検索結果の取得に失敗しました'}
+
             # 検索結果を整形
             formatted_results = []
-            for result in results.get('results', []):
+            for result in results['results']:
                 if not isinstance(result, dict):
                     continue
                     
@@ -264,7 +373,7 @@ class WebTextSearcher:
                 'search_text': search_text,
                 'base_url': url,
                 'results': formatted_results,
-                'total_urls': results.get('total_pages', 0),
+                'total_urls': self.total_pages,
                 'total_results': len(formatted_results),
                 'last_updated': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'is_research': is_research,
@@ -315,112 +424,6 @@ class WebTextSearcher:
             import traceback
             traceback.print_exc()
             return {'error': str(e)}
-
-    def _search_page(self, url, search_text, depth=0, results=None, auth=None):
-        """指定されたURLのページを検索"""
-        if results is None:
-            results = []
-        
-        if url in self.visited_urls or depth > self.max_depth or len(self.visited_urls) >= self.max_pages:
-            return
-        
-        self.visited_urls.add(url)
-        logging.info(f"ページ検索中: {url} (深さ: {depth}, 訪問済みURL数: {len(self.visited_urls)})")
-        
-        try:
-            # 認証情報の設定
-            if auth and isinstance(auth, dict) and 'username' in auth and 'password' in auth:
-                auth_tuple = (auth['username'], auth['password'])
-                self.session.auth = auth_tuple
-                logging.info(f"認証情報を設定: {auth['username']}")
-            else:
-                self.session.auth = None
-            
-            response = self.session.get(url, timeout=self.timeout)
-            
-            # 認証エラーの処理
-            if response.status_code == 401:
-                logging.error(f"認証エラー: {url}")
-                results.append({
-                    'url': url,
-                    'title': '認証エラー',
-                    'depth': depth,
-                    'error': '認証に失敗しました。ユーザー名とパスワードを確認してください。',
-                    'requires_auth': True
-                })
-                return
-            
-            response.raise_for_status()
-            
-            # エンコーディングを適切に設定
-            if response.encoding == 'ISO-8859-1':
-                response.encoding = response.apparent_encoding
-            
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # タイトルの取得
-            title = soup.find('title')
-            title = title.get_text() if title else "タイトルなし"
-            
-            # 本文の検索
-            body_matches = []
-            for text in soup.stripped_strings:
-                if search_text in text:
-                    body_matches.append(text)
-            
-            # headタグ内の検索
-            head_matches = []
-            for meta in soup.find_all('meta'):
-                content = meta.get('content', '')
-                if search_text in content:
-                    head_matches.append(content)
-            
-            # href属性の検索
-            href_matches = []
-            for link in soup.find_all('a', href=True):
-                if search_text in link.get_text():
-                    href_matches.append({
-                        'text': link.get_text(),
-                        'url': link['href'],
-                        'original_url': urljoin(url, link['href'])
-                    })
-            
-            # 結果の追加
-            if body_matches or head_matches or href_matches:
-                results.append({
-                    'url': url,
-                    'title': title,
-                    'depth': depth,
-                    'body_matches': body_matches,
-                    'head_matches': head_matches,
-                    'href_matches': href_matches
-                })
-            
-            # リンク先の検索（max_pagesの制限を考慮）
-            if len(self.visited_urls) < self.max_pages:
-                for link in soup.find_all('a', href=True):
-                    if len(self.visited_urls) >= self.max_pages:
-                        break
-                    link_url = urljoin(url, link['href'])
-                    if link_url.startswith(('http://', 'https://')):
-                        self._search_page(link_url, search_text, depth + 1, results, auth)
-                    
-        except requests.exceptions.RequestException as e:
-            logging.error(f"リクエストエラー: {url} - {str(e)}")
-            results.append({
-                'url': url,
-                'title': 'エラー',
-                'depth': depth,
-                'error': str(e)
-            })
-        except Exception as e:
-            logging.error(f"予期せぬエラー: {url} - {str(e)}")
-            results.append({
-                'url': url,
-                'title': 'エラー',
-                'depth': depth,
-                'error': str(e)
-            })
 
 @app.route('/check_auth', methods=['POST'])
 def check_auth():
